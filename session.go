@@ -1359,6 +1359,7 @@ func (iter *Iter) Scan(dest ...interface{}) bool {
 	}
 
 	if iter.next != nil && iter.pos >= iter.next.pos {
+		iter.next.wg.Add(1)
 		go iter.next.fetch()
 	}
 
@@ -1415,6 +1416,10 @@ func (iter *Iter) Warnings() []string {
 // Close closes the iterator and returns any errors that happened during
 // the query or the iteration.
 func (iter *Iter) Close() error {
+	if iter.next != nil {
+		iter.next.wg.Wait()
+	}
+
 	if atomic.CompareAndSwapInt32(&iter.closed, 0, 1) {
 		if iter.framer != nil {
 			iter.framer = nil
@@ -1457,11 +1462,13 @@ type nextIter struct {
 	qry  *Query
 	pos  int
 	once sync.Once
+	wg   sync.WaitGroup
 	next *Iter
 }
 
 func (n *nextIter) fetch() *Iter {
 	n.once.Do(func() {
+		defer n.wg.Done()
 		n.next = n.qry.session.executeQuery(n.qry)
 	})
 	return n.next
